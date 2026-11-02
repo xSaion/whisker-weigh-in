@@ -1,0 +1,661 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Whisker Weigh-In</title>
+<meta name="description" content="Track your cats' weight.">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icon-192.png" type="image/png">
+<link rel="apple-touch-icon" href="apple-touch-icon.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Weigh-In">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="theme-color" content="#F1F3F6" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#11151B" media="(prefers-color-scheme: dark)">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Gabarito:wght@500;700;800&family=Atkinson+Hyperlegible:wght@400;700&display=swap">
+<style>
+/* Layout: one phone-width column — cat picker, current weight, chart, log form, history. Big tap targets. */
+:root {
+  --bg: #F1F3F6;
+  --surface: #FFFFFF;
+  --ink: #18202B;
+  --muted: #5B6676;
+  --line: #DCE1E8;
+  --accent: #B5540C;
+  --accent-ink: #FFFFFF;
+  --accent-soft: #FBEADB;
+  --warn: #8A4F00;
+  --warn-bg: #FFF0D2;
+  --good: #276143;
+  --good-bg: #E1F1E7;
+  --danger: #B3261E;
+  --chart-fill: rgba(181, 84, 12, 0.12);
+  --font-display: "Gabarito", "Trebuchet MS", system-ui, sans-serif;
+  --font-body: "Atkinson Hyperlegible", system-ui, -apple-system, "Segoe UI", sans-serif;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #11151B; --surface: #1A2029; --ink: #EAEEF3; --muted: #9BA6B5; --line: #2B3440;
+    --accent: #F29A4B; --accent-ink: #1C1206; --accent-soft: #3B2715;
+    --warn: #F6C46E; --warn-bg: #392A0F; --good: #86D4A6; --good-bg: #15301F; --danger: #FF8A80;
+    --chart-fill: rgba(242, 154, 75, 0.16);
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #11151B; --surface: #1A2029; --ink: #EAEEF3; --muted: #9BA6B5; --line: #2B3440;
+  --accent: #F29A4B; --accent-ink: #1C1206; --accent-soft: #3B2715;
+  --warn: #F6C46E; --warn-bg: #392A0F; --good: #86D4A6; --good-bg: #15301F; --danger: #FF8A80;
+  --chart-fill: rgba(242, 154, 75, 0.16);
+  color-scheme: dark;
+}
+* { box-sizing: border-box; }
+html { -webkit-text-size-adjust: 100%; padding-top: env(safe-area-inset-top, 0px); padding-bottom: env(safe-area-inset-bottom, 0px); background: var(--bg); }
+[hidden] { display: none !important; }
+body { margin: 0; -webkit-tap-highlight-color: transparent; background: var(--bg); color: var(--ink); font-family: var(--font-body); font-size: 16px; line-height: 1.45; }
+.wrap {
+  max-width: 520px; margin: 0 auto;
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+  padding-block: 18px 48px;
+  display: flex; flex-direction: column; gap: 16px;
+}
+h1, h2, .num { font-family: var(--font-display); }
+h1 { font-size: 1.6rem; font-weight: 800; margin: 0; letter-spacing: -0.01em; }
+h2 { font-size: 1.05rem; font-weight: 700; margin: 0; }
+button, input { font: inherit; color: inherit; }
+button { cursor: pointer; }
+:focus-visible { outline: 3px solid var(--accent); outline-offset: 2px; }
+
+.top { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.brand { display: flex; align-items: center; gap: 10px; }
+.brand svg { width: 34px; height: 34px; flex: none; }
+.seg { display: inline-flex; border: 1.5px solid var(--line); border-radius: 999px; padding: 3px; background: var(--surface); }
+.seg button { border: 0; background: none; padding: 6px 14px; border-radius: 999px; font-weight: 700; font-size: 0.9rem; color: var(--muted); min-height: 36px; }
+.seg button[aria-pressed="true"] { background: var(--ink); color: var(--bg); }
+
+.chips { display: flex; gap: 8px; overflow-x: auto; padding-bottom: 2px; scrollbar-width: none; }
+.chips::-webkit-scrollbar { display: none; }
+.chip { flex: none; border: 1.5px solid var(--line); background: var(--surface); border-radius: 999px; padding: 8px 16px; font-weight: 700; min-height: 44px; }
+.chip[aria-pressed="true"] { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); }
+.chip.add { color: var(--accent); border-style: dashed; }
+
+.card { background: var(--surface); border: 1px solid var(--line); border-radius: 18px; padding: 18px; display: flex; flex-direction: column; gap: 14px; min-width: 0; }
+.hero { gap: 10px; }
+.hero .label { color: var(--muted); font-size: 0.95rem; }
+.hero .big { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; }
+.hero .num { font-size: 3.4rem; font-weight: 800; line-height: 1; font-variant-numeric: tabular-nums; letter-spacing: -0.02em; }
+.hero .unit { font-size: 1.3rem; color: var(--muted); font-weight: 700; font-family: var(--font-display); }
+.hero .delta { color: var(--muted); font-variant-numeric: tabular-nums; }
+.pill { display: inline-flex; align-items: flex-start; gap: 8px; padding: 10px 12px; border-radius: 12px; font-size: 0.95rem; }
+.pill svg { width: 18px; height: 18px; flex: none; margin-top: 2px; }
+.pill.warn { background: var(--warn-bg); color: var(--warn); }
+.pill.good { background: var(--good-bg); color: var(--good); }
+
+.chart-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; }
+.seg.small button { padding: 4px 12px; min-height: 32px; font-size: 0.85rem; }
+#chart { position: relative; min-height: 180px; }
+#chart svg { display: block; width: 100%; height: 190px; overflow: visible; touch-action: pan-y; }
+#chart .axis { fill: var(--muted); font-size: 11px; font-family: var(--font-body); font-variant-numeric: tabular-nums; }
+#chart .grid { stroke: var(--line); stroke-width: 1; }
+.chart-empty { color: var(--muted); margin: 0; padding: 60px 0; text-align: center; }
+.tip { position: absolute; top: 0; transform: translateX(-50%); background: var(--ink); color: var(--bg); border-radius: 10px; padding: 6px 10px; font-size: 0.85rem; white-space: nowrap; pointer-events: none; font-variant-numeric: tabular-nums; }
+.tip b { font-family: var(--font-display); font-size: 1rem; }
+
+label.f { display: block; font-weight: 700; font-size: 0.9rem; margin-bottom: 6px; }
+.field { display: flex; align-items: center; border: 1.5px solid var(--line); border-radius: 14px; background: var(--bg); padding: 0 14px; min-height: 52px; }
+.field:focus-within { border-color: var(--accent); }
+.field input { border: 0; background: none; outline: none; flex: 1; min-width: 0; padding: 12px 0; }
+.field .u { color: var(--muted); font-weight: 700; }
+.field.big input { font-family: var(--font-display); font-size: 2rem; font-weight: 700; font-variant-numeric: tabular-nums; padding: 6px 0; }
+.field.big { min-height: 64px; }
+.row2 { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.row2 > div { min-width: 0; }
+.check { display: flex; align-items: center; gap: 10px; font-size: 0.95rem; color: var(--muted); min-height: 32px; }
+.check input { width: 20px; height: 20px; accent-color: var(--accent); }
+.scale-result { background: var(--accent-soft); border-radius: 12px; padding: 10px 14px; font-variant-numeric: tabular-nums; }
+.scale-result b { font-family: var(--font-display); font-size: 1.2rem; }
+.btn { border: 0; border-radius: 14px; background: var(--accent); color: var(--accent-ink); font-weight: 700; font-size: 1.05rem; min-height: 54px; padding: 0 20px; }
+.btn.ghost { background: none; color: var(--ink); border: 1.5px solid var(--line); min-height: 44px; font-size: 0.95rem; }
+.btn.danger { background: var(--danger); color: var(--surface); min-height: 44px; font-size: 0.95rem; }
+.msg { margin: 0; font-size: 0.95rem; min-height: 1.4em; }
+.msg.err { color: var(--danger); }
+.msg.ok { color: var(--good); }
+
+.list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; }
+.list li { display: grid; grid-template-columns: 1fr auto auto; align-items: center; gap: 10px; padding: 12px 0; border-top: 1px solid var(--line); }
+.list li:first-child { border-top: 0; }
+.list .when { font-weight: 700; }
+.list .note { color: var(--muted); font-size: 0.9rem; overflow-wrap: anywhere; }
+.list .w { font-family: var(--font-display); font-weight: 700; font-size: 1.15rem; text-align: right; font-variant-numeric: tabular-nums; }
+.list .d { display: block; font-family: var(--font-body); font-weight: 400; font-size: 0.8rem; color: var(--muted); }
+.icon-btn { border: 0; background: none; color: var(--muted); width: 40px; height: 40px; border-radius: 10px; display: grid; place-items: center; }
+.icon-btn svg { width: 18px; height: 18px; }
+.confirm { grid-column: 1 / -1; display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.confirm span { flex: 1 1 140px; }
+.more { color: var(--muted); }
+
+details.settings summary { cursor: pointer; color: var(--muted); font-size: 0.95rem; min-height: 32px; display: flex; align-items: center; }
+details.settings[open] summary { margin-bottom: 10px; }
+.inline { display: flex; gap: 8px; flex-wrap: wrap; }
+.inline .field { flex: 1 1 180px; }
+
+.empty { text-align: left; gap: 12px; }
+.empty p { margin: 0; color: var(--muted); }
+.foot { color: var(--muted); font-size: 0.85rem; text-align: center; margin: 0; }
+.backup { gap: 10px; }
+.backup p { margin: 0; color: var(--muted); font-size: 0.95rem; }
+.backup .inline .btn { flex: 1 1 140px; }
+.install { background: var(--accent-soft); border-color: transparent; }
+.install p { margin: 0; }
+.toast { position: fixed; left: 50%; transform: translateX(-50%); bottom: calc(20px + env(safe-area-inset-bottom, 0px)); background: var(--ink); color: var(--bg); padding: 12px 18px; border-radius: 12px; max-width: calc(100% - 32px); font-size: 0.95rem; z-index: 20; }
+@media (prefers-reduced-motion: no-preference) {
+  .chip, .btn, .seg button { transition: background-color .15s, color .15s; }
+}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header class="top">
+    <div class="brand">
+      <svg viewBox="0 0 40 40" aria-hidden="true">
+        <path d="M8 34 V14 L13 6 L18 13 H22 L27 6 L32 14 V34 Z" fill="var(--accent)"/>
+        <circle cx="15" cy="20" r="2" fill="var(--surface)"/><circle cx="25" cy="20" r="2" fill="var(--surface)"/>
+        <path d="M17.5 25 L20 27 L22.5 25" stroke="var(--surface)" stroke-width="1.8" fill="none" stroke-linecap="round"/>
+      </svg>
+      <h1>Whisker Weigh-In</h1>
+    </div>
+    <div class="seg" role="group" aria-label="Weight unit">
+      <button type="button" id="uKg" data-unit="kg">kg</button>
+      <button type="button" id="uLb" data-unit="lb">lb</button>
+    </div>
+  </header>
+
+  <div id="loading" class="card empty"><p>Loading your cats…</p></div>
+
+  <section id="noCats" class="card empty" hidden>
+    <h2>Who are we weighing?</h2>
+    <p>Add your cat's name to start. You can add more cats later.</p>
+    <form id="firstCatForm" class="inline">
+      <div class="field"><input id="firstCatName" maxlength="40" placeholder="Cat's name" aria-label="Cat's name" autocomplete="off"></div>
+      <button class="btn" type="submit">Add cat</button>
+    </form>
+  </section>
+
+  <div id="main" hidden>
+    <div style="display:flex;flex-direction:column;gap:16px">
+      <nav class="chips" id="chips" aria-label="Choose a cat"></nav>
+      <form id="addCatForm" class="inline" hidden>
+        <div class="field"><input id="newCatName" maxlength="40" placeholder="New cat's name" aria-label="New cat's name" autocomplete="off"></div>
+        <button class="btn" type="submit">Add</button>
+      </form>
+
+      <section class="card hero" id="hero" aria-live="polite"></section>
+
+      <section class="card">
+        <div class="chart-head">
+          <h2 id="chartTitle">Weight over time</h2>
+          <div class="seg small" role="group" aria-label="Time range">
+            <button type="button" data-range="3m">3 mo</button>
+            <button type="button" data-range="1y">1 yr</button>
+            <button type="button" data-range="all">All</button>
+          </div>
+        </div>
+        <div id="chart"></div>
+      </section>
+
+      <section class="card">
+        <h2 id="logTitle">Log a weigh-in</h2>
+        <form id="logForm" novalidate>
+          <div style="display:flex;flex-direction:column;gap:14px">
+            <label class="check"><input type="checkbox" id="useScale"> Using a bathroom scale (hold the cat)</label>
+            <div id="directRow">
+              <label class="f" for="wIn">Weight</label>
+              <div class="field big"><input id="wIn" inputmode="decimal" autocomplete="off" placeholder="0.00"><span class="u unitLab">kg</span></div>
+            </div>
+            <div id="scaleRows" hidden>
+              <div style="display:flex;flex-direction:column;gap:10px">
+                <div class="row2">
+                  <div><label class="f" for="withCat">You + cat</label><div class="field"><input id="withCat" inputmode="decimal" autocomplete="off"><span class="u unitLab">kg</span></div></div>
+                  <div><label class="f" for="youAlone">You alone</label><div class="field"><input id="youAlone" inputmode="decimal" autocomplete="off"><span class="u unitLab">kg</span></div></div>
+                </div>
+                <div class="scale-result" id="scaleResult">Step on the scale holding the cat, then again without.</div>
+              </div>
+            </div>
+            <div class="row2">
+              <div><label class="f" for="dIn">Date</label><div class="field"><input id="dIn" type="date"></div></div>
+              <div><label class="f" for="nIn">Note</label><div class="field"><input id="nIn" maxlength="120" placeholder="Optional" autocomplete="off"></div></div>
+            </div>
+            <button class="btn" type="submit" id="saveBtn">Save weigh-in</button>
+            <p class="msg" id="formMsg" role="status"></p>
+          </div>
+        </form>
+      </section>
+
+      <section class="card">
+        <h2>History</h2>
+        <ul class="list" id="history"></ul>
+      </section>
+
+      <details class="settings card" id="settings">
+        <summary id="settingsSum">Cat settings</summary>
+        <div style="display:flex;flex-direction:column;gap:12px">
+          <form id="renameForm" class="inline">
+            <div class="field"><input id="renameIn" maxlength="40" aria-label="Cat's name" autocomplete="off"></div>
+            <button class="btn ghost" type="submit">Rename</button>
+          </form>
+          <div id="removeArea"></div>
+        </div>
+      </details>
+    </div>
+  </div>
+
+  <section class="card install" id="installTip" hidden>
+    <h2>Put it on your home screen</h2>
+    <p id="installText"></p>
+    <button type="button" class="btn ghost" id="installHide">Got it</button>
+  </section>
+
+  <section class="card backup">
+    <h2>Backup</h2>
+    <p>Weights are saved on this phone only. Save a backup file now and then, and use it to move your cats to a new phone.</p>
+    <div class="inline">
+      <button type="button" class="btn ghost" id="exportBtn">Save backup</button>
+      <button type="button" class="btn ghost" id="importBtn">Restore backup</button>
+      <input type="file" id="importFile" accept=".json,application/json" hidden>
+    </div>
+    <div id="importConfirm"></div>
+  </section>
+
+</div>
+<div class="toast" id="toast" hidden></div>
+
+<script>
+(function () {
+  var KG_PER_LB = 0.45359237;
+  var $ = function (s) { return document.querySelector(s); };
+  var ls = {
+    get: function (k, d) { try { var v = localStorage.getItem(k); return v == null ? d : JSON.parse(v); } catch (e) { return d; } },
+    set: function (k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch (e) {} }
+  };
+  var state = {
+    cats: [], weighs: [], loadedCats: false, loadedWeighs: false,
+    mode: 'loading', stale: false, sel: ls.get('ww.sel', null),
+    unit: ls.get('ww.unit', 'kg'), range: ls.get('ww.range', 'all'),
+    confirmDel: null, confirmCat: false
+  };
+
+  // ---------- helpers ----------
+  function esc(s) { return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]; }); }
+  function newId() { return (Date.now().toString(36) + Math.random().toString(36).slice(2, 8)); }
+  function toUnit(kg) { return state.unit === 'kg' ? kg : kg / KG_PER_LB; }
+  function fromUnit(v) { return state.unit === 'kg' ? v : v * KG_PER_LB; }
+  function dec() { return state.unit === 'kg' ? 2 : 1; }
+  function fmtW(kg) { return toUnit(kg).toFixed(dec()); }
+  function fmtDelta(kg) {
+    var v = toUnit(kg), d = dec();
+    if (Math.abs(v) < Math.pow(10, -d) / 2) return 'no change';
+    return (v > 0 ? '+' : '−') + Math.abs(v).toFixed(d) + ' ' + state.unit;
+  }
+  function parseNum(s) { s = String(s || '').trim().replace(',', '.'); if (!/^\d*\.?\d+$/.test(s)) return NaN; return parseFloat(s); }
+  function todayStr() { var d = new Date(); return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0'); }
+  function dnum(s) { var p = s.split('-').map(Number); return Date.UTC(p[0], p[1] - 1, p[2]) / 864e5; }
+  function fmtDate(s, withYear) {
+    var p = s.split('-').map(Number), dt = new Date(p[0], p[1] - 1, p[2]);
+    var o = { month: 'short', day: 'numeric' };
+    if (withYear || p[0] !== new Date().getFullYear()) o.year = 'numeric';
+    return dt.toLocaleDateString(undefined, o);
+  }
+  function daysAgo(s) {
+    var n = Math.round(dnum(todayStr()) - dnum(s));
+    if (n <= 0) return 'today'; if (n === 1) return 'yesterday';
+    if (n < 14) return n + ' days ago'; if (n < 60) return Math.round(n / 7) + ' weeks ago';
+    return Math.round(n / 30.4) + ' months ago';
+  }
+  function catWeighs(id) {
+    return state.weighs.filter(function (w) { return w.cat === id; })
+      .sort(function (a, b) { return a.date < b.date ? -1 : a.date > b.date ? 1 : (a.created || 0) - (b.created || 0); });
+  }
+  function selCat() { for (var i = 0; i < state.cats.length; i++) if (state.cats[i].id === state.sel) return state.cats[i]; return null; }
+  function sortedCats() { return state.cats.slice().sort(function (a, b) { return (a.created || 0) - (b.created || 0); }); }
+  function fixSel() {
+    if (!selCat() && state.cats.length) { state.sel = sortedCats()[0].id; ls.set('ww.sel', state.sel); }
+  }
+  var toastT;
+  function toast(t) { var el = $('#toast'); el.textContent = t; el.hidden = false; clearTimeout(toastT); toastT = setTimeout(function () { el.hidden = true; }, 3500); }
+
+  // ---------- storage ----------
+  function saveLocal() { ls.set('ww.local.cats', state.cats); ls.set('ww.local.weighs', state.weighs); }
+  function listFor(coll) { return coll === 'cats' ? state.cats : state.weighs; }
+  function put(coll, id, data) {
+    var arr = listFor(coll), obj = Object.assign({ id: id }, data), i = arr.findIndex(function (x) { return x.id === id; });
+    if (i >= 0) arr[i] = obj; else arr.push(obj);
+    saveLocal(); render(); return Promise.resolve();
+  }
+  function del(coll, id) {
+    var arr = listFor(coll), i = arr.findIndex(function (x) { return x.id === id; });
+    if (i >= 0) arr.splice(i, 1);
+    saveLocal(); render(); return Promise.resolve();
+  }
+  function writeError() { return 'Couldn’t save on this phone. Check that the browser isn’t in private mode.'; }
+  function strip(o) { var r = Object.assign({}, o); delete r.id; return r; }
+
+  async function boot() {
+    $('#dIn').value = todayStr();
+    $('#dIn').max = todayStr();
+    state.mode = 'local';
+    state.cats = ls.get('ww.local.cats', []); state.weighs = ls.get('ww.local.weighs', []);
+    state.loadedCats = state.loadedWeighs = true;
+    fixSel(); render(); showInstallTip();
+    // Ask the browser not to clear this app's data when space runs low.
+    try { if (navigator.storage && navigator.storage.persist) await navigator.storage.persist(); } catch (e) {}
+  }
+
+  // ---------- install tip ----------
+  function showInstallTip() {
+    var standalone = (window.matchMedia && matchMedia('(display-mode: standalone)').matches) || navigator.standalone;
+    if (standalone || ls.get('ww.installHidden', false)) return;
+    var ua = navigator.userAgent, ios = /iPhone|iPad|iPod/.test(ua) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+    var android = /Android/.test(ua);
+    if (!ios && !android) return;
+    $('#installText').textContent = ios
+      ? 'In Safari, tap the Share button, then “Add to Home Screen”. The app then opens on its own, works offline, and keeps your cats on this phone.'
+      : 'In Chrome, tap the ⋮ menu, then “Add to Home screen” or “Install app”. The app then opens on its own, works offline, and keeps your cats on this phone.';
+    $('#installTip').hidden = false;
+  }
+  $('#installHide').addEventListener('click', function () { ls.set('ww.installHidden', true); $('#installTip').hidden = true; });
+
+  // ---------- backup ----------
+  $('#exportBtn').addEventListener('click', function () {
+    var data = { app: 'whisker-weigh-in', version: 1, saved: new Date().toISOString(), cats: state.cats, weighs: state.weighs };
+    var json = JSON.stringify(data, null, 2);
+    var name = 'cat-weights-' + todayStr() + '.json';
+    var file = null;
+    try { file = new File([json], name, { type: 'application/json' }); } catch (e) {}
+    if (file && navigator.canShare && navigator.canShare({ files: [file] })) {
+      navigator.share({ files: [file], title: 'Cat weights backup' }).catch(function () {});
+      return;
+    }
+    var a = document.createElement('a');
+    a.href = URL.createObjectURL(new Blob([json], { type: 'application/json' }));
+    a.download = name; document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(function () { URL.revokeObjectURL(a.href); }, 2000);
+    toast('Backup saved as ' + name + '.');
+  });
+  var pendingImport = null;
+  $('#importBtn').addEventListener('click', function () { $('#importFile').click(); });
+  $('#importFile').addEventListener('change', function () {
+    var f = this.files && this.files[0]; this.value = '';
+    if (!f) return;
+    var r = new FileReader();
+    r.onload = function () {
+      var d;
+      try { d = JSON.parse(r.result); } catch (e) { d = null; }
+      if (!d || !Array.isArray(d.cats) || !Array.isArray(d.weighs)) { toast('That file isn’t a Whisker Weigh-In backup.'); return; }
+      pendingImport = d;
+      $('#importConfirm').innerHTML = '<div class="confirm"><span>Replace what’s on this phone with ' + d.cats.length + ' cats and ' + d.weighs.length + ' weigh-ins from the backup?</span><button type="button" class="btn danger" id="impYes">Replace</button><button type="button" class="btn ghost" id="impNo">Cancel</button></div>';
+    };
+    r.readAsText(f);
+  });
+  $('#importConfirm').addEventListener('click', function (e) {
+    if (e.target.closest('#impNo')) { pendingImport = null; this.innerHTML = ''; return; }
+    if (e.target.closest('#impYes') && pendingImport) {
+      state.cats = pendingImport.cats.filter(function (c) { return c && c.id && c.name; });
+      state.weighs = pendingImport.weighs.filter(function (w) { return w && w.id && w.cat && typeof w.kg === 'number' && /^\d{4}-\d\d-\d\d$/.test(w.date); });
+      pendingImport = null; this.innerHTML = '';
+      saveLocal(); state.sel = null; fixSel(); render();
+      toast('Backup restored.');
+    }
+  });
+
+  // ---------- actions ----------
+  function addCat(name) {
+    name = name.trim();
+    if (!name) { toast('Type a name first.'); return Promise.resolve(false); }
+    var id = newId();
+    state.sel = id; ls.set('ww.sel', id);
+    return put('cats', id, { name: name, created: Date.now() }).then(function () { return true; }, function (e) { toast(writeError(e)); return false; });
+  }
+
+  // ---------- render ----------
+  var ICON_WARN = '<svg viewBox="0 0 20 20" aria-hidden="true"><path d="M10 2 L19 18 H1 Z" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/><path d="M10 8 V12" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><circle cx="10" cy="15" r="1.2" fill="currentColor"/></svg>';
+  var ICON_OK = '<svg viewBox="0 0 20 20" aria-hidden="true"><circle cx="10" cy="10" r="8" fill="none" stroke="currentColor" stroke-width="2"/><path d="M6 10.5 L9 13 L14 7.5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+  var ICON_DEL = '<svg viewBox="0 0 20 20" aria-hidden="true"><path d="M4 6 H16 M8 6 V4 H12 V6 M6 6 L7 17 H13 L14 6" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+
+  function trend(ws) {
+    if (ws.length < 2) return null;
+    var last = ws[ws.length - 1], L = dnum(last.date), ref = null;
+    for (var i = ws.length - 2; i >= 0; i--) {
+      var gap = L - dnum(ws[i].date);
+      if (gap >= 21) { if (gap <= 120) ref = ws[i]; break; }
+    }
+    if (!ref) return null;
+    return { pct: (last.kg - ref.kg) / ref.kg * 100, ref: ref };
+  }
+
+  function render() {
+    $('#uKg').setAttribute('aria-pressed', state.unit === 'kg');
+    $('#uLb').setAttribute('aria-pressed', state.unit === 'lb');
+    document.querySelectorAll('[data-range]').forEach(function (b) { b.setAttribute('aria-pressed', b.dataset.range === state.range); });
+    document.querySelectorAll('.unitLab').forEach(function (u) { u.textContent = state.unit; });
+    $('#wIn').placeholder = state.unit === 'kg' ? '0.00' : '0.0';
+
+
+    var ready = state.loadedCats && state.loadedWeighs;
+    $('#loading').hidden = ready;
+    $('#noCats').hidden = !ready || state.cats.length > 0;
+    $('#main').hidden = !ready || state.cats.length === 0;
+    if (!ready || !state.cats.length) return;
+
+    var cat = selCat(); if (!cat) { fixSel(); cat = selCat(); }
+    var ws = catWeighs(cat.id);
+
+    // chips
+    $('#chips').innerHTML = sortedCats().map(function (c) {
+      return '<button type="button" class="chip" data-cat="' + esc(c.id) + '" aria-pressed="' + (c.id === cat.id) + '">' + esc(c.name) + '</button>';
+    }).join('') + '<button type="button" class="chip add" id="addChip">+ Add cat</button>';
+
+    // hero
+    var h = '';
+    if (!ws.length) {
+      h = '<div class="label">' + esc(cat.name) + '</div><h2 style="font-size:1.4rem">No weigh-ins yet</h2><p class="more" style="margin:0">Log ' + esc(cat.name) + '’s first weight below.</p>';
+    } else {
+      var last = ws[ws.length - 1], prev = ws[ws.length - 2];
+      h = '<div class="label">' + esc(cat.name) + ' · weighed ' + daysAgo(last.date) + '</div>' +
+        '<div class="big"><span class="num">' + fmtW(last.kg) + '</span><span class="unit">' + state.unit + '</span></div>' +
+        (prev ? '<div class="delta">' + fmtDelta(last.kg - prev.kg) + ' since ' + fmtDate(prev.date) + '</div>' : '<div class="delta">First weigh-in. Add another in a week or two to see a trend.</div>');
+      var t = trend(ws);
+      if (t) {
+        var p = Math.abs(t.pct).toFixed(1) + '%';
+        if (t.pct <= -5) h += '<div class="pill warn">' + ICON_WARN + '<span>Down ' + p + ' since ' + fmtDate(t.ref.date) + '. Steady weight loss in a cat is worth mentioning to your vet.</span></div>';
+        else if (t.pct >= 10) h += '<div class="pill warn">' + ICON_WARN + '<span>Up ' + p + ' since ' + fmtDate(t.ref.date) + '. Worth asking your vet about portion sizes.</span></div>';
+        else h += '<div class="pill good">' + ICON_OK + '<span>Steady: ' + (t.pct < 0 ? 'down ' : 'up ') + p + ' since ' + fmtDate(t.ref.date) + '.</span></div>';
+      }
+    }
+    $('#hero').innerHTML = h;
+    $('#chartTitle').textContent = cat.name + '’s weight (' + state.unit + ')';
+    $('#logTitle').textContent = 'Log a weigh-in for ' + cat.name;
+    $('#settingsSum').textContent = 'Rename or remove ' + cat.name;
+    if (document.activeElement !== $('#renameIn')) $('#renameIn').value = cat.name;
+
+    drawChart(ws);
+
+    // history
+    var rows = ws.slice().reverse();
+    $('#history').innerHTML = rows.length ? rows.map(function (w, i) {
+      var older = rows[i + 1];
+      var conf = state.confirmDel === w.id
+        ? '<div class="confirm"><span>Delete this weigh-in?</span><button type="button" class="btn danger" data-delyes="' + esc(w.id) + '">Delete</button><button type="button" class="btn ghost" data-delno="1">Keep</button></div>'
+        : '';
+      return '<li><div><div class="when">' + fmtDate(w.date, true) + '</div>' + (w.note ? '<div class="note">' + esc(w.note) + '</div>' : '') + '</div>' +
+        '<div class="w">' + fmtW(w.kg) + ' ' + state.unit + (older ? '<span class="d">' + fmtDelta(w.kg - older.kg) + '</span>' : '') + '</div>' +
+        '<button type="button" class="icon-btn" data-del="' + esc(w.id) + '" aria-label="Delete weigh-in from ' + fmtDate(w.date, true) + '">' + ICON_DEL + '</button>' + conf + '</li>';
+    }).join('') : '<li><span class="more">Weigh-ins you log show up here.</span></li>';
+
+    // remove cat
+    $('#removeArea').innerHTML = state.confirmCat
+      ? '<div class="confirm"><span>Remove ' + esc(cat.name) + ' and all ' + ws.length + ' weigh-ins? This can’t be undone.</span><button type="button" class="btn danger" id="catYes">Remove</button><button type="button" class="btn ghost" id="catNo">Keep</button></div>'
+      : '<button type="button" class="btn ghost" id="catDel">Remove ' + esc(cat.name) + '</button>';
+  }
+
+  // ---------- chart ----------
+  function niceStep(raw) {
+    var p = Math.pow(10, Math.floor(Math.log10(raw))), n = raw / p;
+    return (n <= 1 ? 1 : n <= 2 ? 2 : n <= 2.5 ? 2.5 : n <= 5 ? 5 : 10) * p;
+  }
+  function drawChart(all) {
+    var box = $('#chart');
+    var cutoff = state.range === '3m' ? 92 : state.range === '1y' ? 366 : Infinity;
+    var T = dnum(todayStr());
+    var pts = all.filter(function (w) { return T - dnum(w.date) <= cutoff; });
+    if (!all.length) { box.innerHTML = '<p class="chart-empty">The chart fills in as you log weigh-ins.</p>'; return; }
+    if (!pts.length) { box.innerHTML = '<p class="chart-empty">No weigh-ins in this period. Try “All”.</p>'; return; }
+
+    var W = Math.max(260, box.clientWidth || 320), H = 190, L = 40, R = 14, Tp = 30, B = 24;
+    var xs = pts.map(function (p) { return dnum(p.date); });
+    var x0 = Math.min.apply(null, xs), x1 = Math.max.apply(null, xs);
+    if (x1 - x0 < 1) { x0 -= 3; x1 += 3; }
+    var ys = pts.map(function (p) { return toUnit(p.kg); });
+    var lo = Math.min.apply(null, ys), hi = Math.max.apply(null, ys);
+    var span = Math.max(hi - lo, state.unit === 'kg' ? 0.5 : 1);
+    var mid = (lo + hi) / 2;
+    var step = niceStep(span / 3);
+    var y0 = Math.floor((mid - span * 0.65) / step) * step, y1 = Math.ceil((mid + span * 0.65) / step) * step;
+    var X = function (v) { return L + (v - x0) / (x1 - x0) * (W - L - R); };
+    var Y = function (v) { return Tp + (1 - (v - y0) / (y1 - y0)) * (H - Tp - B); };
+    var sd = step < 0.1 ? 2 : step < 1 ? 1 : 0;
+
+    var s = '<svg viewBox="0 0 ' + W + ' ' + H + '" role="img" aria-label="Line chart of weight over time">';
+    for (var v = y0; v <= y1 + step / 2; v += step) {
+      var y = Y(v).toFixed(1);
+      s += '<line class="grid" x1="' + L + '" x2="' + (W - R) + '" y1="' + y + '" y2="' + y + '"/>';
+      s += '<text class="axis" x="' + (L - 8) + '" y="' + y + '" dy="4" text-anchor="end">' + v.toFixed(sd) + '</text>';
+    }
+    var first = pts[0], lastP = pts[pts.length - 1];
+    s += '<text class="axis" x="' + L + '" y="' + (H - 4) + '" text-anchor="start">' + fmtDate(first.date) + '</text>';
+    if (pts.length > 1) s += '<text class="axis" x="' + (W - R) + '" y="' + (H - 4) + '" text-anchor="end">' + fmtDate(lastP.date) + '</text>';
+
+    var line = pts.map(function (p, i) { return (i ? 'L' : 'M') + X(dnum(p.date)).toFixed(1) + ' ' + Y(toUnit(p.kg)).toFixed(1); }).join(' ');
+    if (pts.length > 1) {
+      var base = Y(y0).toFixed(1);
+      s += '<path d="' + line + ' L' + X(dnum(lastP.date)).toFixed(1) + ' ' + base + ' L' + X(dnum(first.date)).toFixed(1) + ' ' + base + ' Z" fill="var(--chart-fill)"/>';
+      s += '<path d="' + line + '" fill="none" stroke="var(--accent)" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>';
+    }
+    s += '<line id="cross" x1="0" x2="0" y1="' + Tp + '" y2="' + (H - B) + '" stroke="var(--muted)" stroke-dasharray="3 3" visibility="hidden"/>';
+    pts.forEach(function (p, i) {
+      var isLast = i === pts.length - 1;
+      s += '<circle cx="' + X(dnum(p.date)).toFixed(1) + '" cy="' + Y(toUnit(p.kg)).toFixed(1) + '" r="' + (isLast ? 6 : 4) + '" fill="var(--accent)" stroke="var(--surface)" stroke-width="2"/>';
+    });
+    s += '<rect x="' + L + '" y="0" width="' + (W - L - R) + '" height="' + H + '" fill="transparent" id="hit"/>';
+    s += '</svg><div class="tip" id="tip" hidden></div>';
+    box.innerHTML = s;
+
+    var svg = box.querySelector('svg'), tip = $('#tip'), cross = $('#cross');
+    function show(ev) {
+      var r = svg.getBoundingClientRect(), mx = (ev.clientX - r.left) * (W / r.width);
+      var best = 0, bd = Infinity;
+      pts.forEach(function (p, i) { var d = Math.abs(X(dnum(p.date)) - mx); if (d < bd) { bd = d; best = i; } });
+      var p = pts[best], px = X(dnum(p.date));
+      cross.setAttribute('x1', px); cross.setAttribute('x2', px); cross.setAttribute('visibility', 'visible');
+      tip.innerHTML = '<b>' + fmtW(p.kg) + ' ' + state.unit + '</b> · ' + fmtDate(p.date, true);
+      tip.hidden = false;
+      var left = px * (r.width / W), half = tip.offsetWidth / 2;
+      tip.style.left = Math.min(Math.max(left, half), r.width - half) + 'px';
+    }
+    function hide() { tip.hidden = true; cross.setAttribute('visibility', 'hidden'); }
+    svg.addEventListener('pointermove', show);
+    svg.addEventListener('pointerdown', show);
+    svg.addEventListener('pointerleave', function (e) { if (e.pointerType === 'mouse') hide(); });
+  }
+
+  // ---------- events ----------
+  $('.top .seg').addEventListener('click', function (e) {
+    var b = e.target.closest('[data-unit]'); if (!b) return;
+    state.unit = b.dataset.unit; ls.set('ww.unit', state.unit); render(); updateScale();
+  });
+  document.querySelector('.chart-head .seg').addEventListener('click', function (e) {
+    var b = e.target.closest('[data-range]'); if (!b) return;
+    state.range = b.dataset.range; ls.set('ww.range', state.range); render();
+  });
+  $('#chips').addEventListener('click', function (e) {
+    var b = e.target.closest('[data-cat]');
+    if (b) { state.sel = b.dataset.cat; ls.set('ww.sel', state.sel); state.confirmDel = null; state.confirmCat = false; $('#settings').open = false; render(); return; }
+    if (e.target.closest('#addChip')) { var f = $('#addCatForm'); f.hidden = !f.hidden; if (!f.hidden) $('#newCatName').focus(); }
+  });
+  $('#firstCatForm').addEventListener('submit', function (e) {
+    e.preventDefault(); addCat($('#firstCatName').value).then(function (ok) { if (ok) $('#firstCatName').value = ''; });
+  });
+  $('#addCatForm').addEventListener('submit', function (e) {
+    e.preventDefault(); addCat($('#newCatName').value).then(function (ok) { if (ok) { $('#newCatName').value = ''; $('#addCatForm').hidden = true; } });
+  });
+  $('#renameForm').addEventListener('submit', function (e) {
+    e.preventDefault(); var cat = selCat(), n = $('#renameIn').value.trim(); if (!cat || !n || n === cat.name) return;
+    put('cats', cat.id, Object.assign(strip(cat), { name: n })).then(function () { $('#renameIn').blur(); toast('Renamed to ' + n + '.'); }, function (er) { toast(writeError(er)); });
+  });
+  $('#removeArea').addEventListener('click', async function (e) {
+    if (e.target.closest('#catDel')) { state.confirmCat = true; render(); return; }
+    if (e.target.closest('#catNo')) { state.confirmCat = false; render(); return; }
+    if (e.target.closest('#catYes')) {
+      var cat = selCat(); if (!cat) return;
+      try {
+        var ws = catWeighs(cat.id);
+        for (var i = 0; i < ws.length; i++) await del('weighs', ws[i].id);
+        await del('cats', cat.id);
+        state.confirmCat = false; state.sel = null; $('#settings').open = false; fixSel(); render();
+        toast(cat.name + ' removed.');
+      } catch (er) { toast(writeError(er)); }
+    }
+  });
+  $('#history').addEventListener('click', function (e) {
+    var d = e.target.closest('[data-del]'); if (d) { state.confirmDel = d.dataset.del; render(); return; }
+    if (e.target.closest('[data-delno]')) { state.confirmDel = null; render(); return; }
+    var y = e.target.closest('[data-delyes]');
+    if (y) { var id = y.dataset.delyes; state.confirmDel = null; del('weighs', id).then(function () { toast('Weigh-in deleted.'); }, function (er) { toast(writeError(er)); }); }
+  });
+
+  // log form
+  function updateScale() {
+    var a = parseNum($('#withCat').value), b = parseNum($('#youAlone').value), out = $('#scaleResult');
+    if (isNaN(a) || isNaN(b)) { out.textContent = 'Step on the scale holding the cat, then again without.'; return NaN; }
+    var diff = a - b;
+    if (diff <= 0) { out.textContent = 'The “you + cat” number should be bigger than “you alone”.'; return NaN; }
+    out.innerHTML = 'Cat weighs <b>' + diff.toFixed(dec()) + ' ' + state.unit + '</b>';
+    return diff;
+  }
+  $('#useScale').addEventListener('change', function () {
+    var on = this.checked; $('#scaleRows').hidden = !on; $('#directRow').hidden = on; $('#formMsg').textContent = '';
+  });
+  $('#withCat').addEventListener('input', updateScale);
+  $('#youAlone').addEventListener('input', updateScale);
+  $('#logForm').addEventListener('submit', function (e) {
+    e.preventDefault();
+    var msg = $('#formMsg'), cat = selCat(); msg.className = 'msg';
+    if (!cat) return;
+    var v = $('#useScale').checked ? updateScale() : parseNum($('#wIn').value);
+    if (isNaN(v)) { msg.className = 'msg err'; msg.textContent = 'Enter the weight as a number, like ' + (state.unit === 'kg' ? '4.25' : '9.4') + '.'; return; }
+    var kg = fromUnit(v);
+    if (kg < 0.1 || kg > 20) { msg.className = 'msg err'; msg.textContent = 'That looks off for a cat. Check the number and the kg/lb switch.'; return; }
+    var date = $('#dIn').value || todayStr();
+    if (date > todayStr()) { msg.className = 'msg err'; msg.textContent = 'The date can’t be in the future.'; return; }
+    var btn = $('#saveBtn'); btn.disabled = true;
+    put('weighs', newId(), { cat: cat.id, kg: Math.round(kg * 1000) / 1000, date: date, note: $('#nIn').value.trim(), created: Date.now() })
+      .then(function () {
+        $('#wIn').value = ''; $('#withCat').value = ''; $('#youAlone').value = ''; $('#nIn').value = ''; $('#dIn').value = todayStr(); updateScale();
+        msg.className = 'msg ok'; msg.textContent = 'Saved ' + v.toFixed(dec()) + ' ' + state.unit + ' for ' + cat.name + '.';
+      }, function (er) { msg.className = 'msg err'; msg.textContent = writeError(er); })
+      .then(function () { btn.disabled = false; });
+  });
+
+  var rT; window.addEventListener('resize', function () { clearTimeout(rT); rT = setTimeout(render, 150); });
+  boot();
+  if ('serviceWorker' in navigator) {
+    window.addEventListener('load', function () { navigator.serviceWorker.register('sw.js').catch(function () {}); });
+  }
+})();
+</script>
+</body>
+</html>
