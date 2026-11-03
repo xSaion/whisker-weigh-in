@@ -1,9 +1,14 @@
-// Offline support: app files are cached on install; fonts are cached the first time they load.
-const CACHE = 'weigh-in-v1';
+// Offline support: the app opens from its saved copy right away and updates itself in the background.
+// Change CACHE when the app's files change, so phones pick up the new version.
+const CACHE = 'weigh-in-v2';
 const FILES = ['./', 'index.html', 'manifest.webmanifest', 'icon-192.png', 'icon-512.png', 'apple-touch-icon.png'];
 
 self.addEventListener('install', (e) => {
-  e.waitUntil(caches.open(CACHE).then((c) => c.addAll(FILES)).then(() => self.skipWaiting()));
+  e.waitUntil(
+    caches.open(CACHE)
+      .then((c) => c.addAll(FILES.map((f) => new Request(f, { cache: 'reload' }))))
+      .then(() => self.skipWaiting())
+  );
 });
 
 self.addEventListener('activate', (e) => {
@@ -19,17 +24,19 @@ self.addEventListener('fetch', (e) => {
   if (req.method !== 'GET') return;
   const url = new URL(req.url);
 
-  // App files: try the network so updates arrive, fall back to the cache offline.
+  // App files: answer from the cache, refresh the cache from the network in the background.
   if (url.origin === location.origin) {
-    e.respondWith(
-      fetch(req)
-        .then((res) => {
-          const copy = res.clone();
-          caches.open(CACHE).then((c) => c.put(req, copy));
-          return res;
-        })
-        .catch(() => caches.match(req).then((r) => r || caches.match('index.html')))
-    );
+    e.respondWith(caches.open(CACHE).then((c) => c.match(req).then((hit) => {
+      const net = fetch(req).then((res) => {
+        if (res.ok) c.put(req, res.clone());
+        return res;
+      });
+      if (hit) {
+        e.waitUntil(net.catch(() => {}));
+        return hit;
+      }
+      return net.catch(() => c.match('index.html'));
+    })));
     return;
   }
 

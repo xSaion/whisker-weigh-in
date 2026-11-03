@@ -65,7 +65,7 @@ body { margin: 0; -webkit-tap-highlight-color: transparent; background: var(--bg
   display: flex; flex-direction: column; gap: 16px;
 }
 h1, h2, .num { font-family: var(--font-display); }
-h1 { font-size: 1.6rem; font-weight: 800; margin: 0; letter-spacing: -0.01em; }
+h1 { font-size: clamp(1.2rem, 5.6vw, 1.6rem); font-weight: 800; margin: 0; letter-spacing: -0.01em; white-space: nowrap; }
 h2 { font-size: 1.05rem; font-weight: 700; margin: 0; }
 button, input { font: inherit; color: inherit; }
 button { cursor: pointer; }
@@ -127,7 +127,7 @@ label.f { display: block; font-weight: 700; font-size: 0.9rem; margin-bottom: 6p
 .msg.ok { color: var(--good); }
 
 .list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; }
-.list li { display: grid; grid-template-columns: 1fr auto auto; align-items: center; gap: 10px; padding: 12px 0; border-top: 1px solid var(--line); }
+.list li { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; align-items: center; gap: 6px; padding: 12px 0; border-top: 1px solid var(--line); }
 .list li:first-child { border-top: 0; }
 .list .when { font-weight: 700; }
 .list .note { color: var(--muted); font-size: 0.9rem; overflow-wrap: anywhere; }
@@ -150,6 +150,10 @@ details.settings[open] summary { margin-bottom: 10px; }
 .backup { gap: 10px; }
 .backup p { margin: 0; color: var(--muted); font-size: 0.95rem; }
 .backup .inline .btn { flex: 1 1 140px; }
+.backup .backup-status { color: var(--ink); font-weight: 700; }
+.backup.due { background: var(--warn-bg); border-color: transparent; }
+.backup.due .backup-status { color: var(--warn); }
+.list .acts { display: flex; }
 .install { background: var(--accent-soft); border-color: transparent; }
 .install p { margin: 0; }
 .toast { position: fixed; left: 50%; transform: translateX(-50%); bottom: calc(20px + env(safe-area-inset-bottom, 0px)); background: var(--ink); color: var(--bg); padding: 12px 18px; border-radius: 12px; max-width: calc(100% - 32px); font-size: 0.95rem; z-index: 20; }
@@ -231,6 +235,7 @@ details.settings[open] summary { margin-bottom: 10px; }
               <div><label class="f" for="nIn">Note</label><div class="field"><input id="nIn" maxlength="120" placeholder="Optional" autocomplete="off"></div></div>
             </div>
             <button class="btn" type="submit" id="saveBtn">Save weigh-in</button>
+            <button class="btn ghost" type="button" id="cancelEdit" hidden>Cancel editing</button>
             <p class="msg" id="formMsg" role="status"></p>
           </div>
         </form>
@@ -239,6 +244,7 @@ details.settings[open] summary { margin-bottom: 10px; }
       <section class="card">
         <h2>History</h2>
         <ul class="list" id="history"></ul>
+        <button type="button" class="btn ghost" id="historyMore" hidden></button>
       </section>
 
       <details class="settings card" id="settings">
@@ -260,9 +266,10 @@ details.settings[open] summary { margin-bottom: 10px; }
     <button type="button" class="btn ghost" id="installHide">Got it</button>
   </section>
 
-  <section class="card backup">
+  <section class="card backup" id="backupCard">
     <h2>Backup</h2>
     <p>Weights are saved on this phone only. Save a backup file now and then, and use it to move your cats to a new phone.</p>
+    <p class="backup-status" id="backupStatus"></p>
     <div class="inline">
       <button type="button" class="btn ghost" id="exportBtn">Save backup</button>
       <button type="button" class="btn ghost" id="importBtn">Restore backup</button>
@@ -286,8 +293,9 @@ details.settings[open] summary { margin-bottom: 10px; }
     cats: [], weighs: [], loadedCats: false, loadedWeighs: false,
     mode: 'loading', stale: false, sel: ls.get('ww.sel', null),
     unit: ls.get('ww.unit', 'kg'), range: ls.get('ww.range', 'all'),
-    confirmDel: null, confirmCat: false
+    confirmDel: null, confirmCat: false, editId: null, showAll: false
   };
+  var HISTORY_SHOWN = 10;
 
   // ---------- helpers ----------
   function esc(s) { return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]; }); }
@@ -329,17 +337,32 @@ details.settings[open] summary { margin-bottom: 10px; }
   function toast(t) { var el = $('#toast'); el.textContent = t; el.hidden = false; clearTimeout(toastT); toastT = setTimeout(function () { el.hidden = true; }, 3500); }
 
   // ---------- storage ----------
-  function saveLocal() { ls.set('ww.local.cats', state.cats); ls.set('ww.local.weighs', state.weighs); }
+  function saveLocal() {
+    try {
+      localStorage.setItem('ww.local.cats', JSON.stringify(state.cats));
+      localStorage.setItem('ww.local.weighs', JSON.stringify(state.weighs));
+      return true;
+    } catch (e) { return false; }
+  }
+  // Apply a change, write it to storage, and undo it if the write fails.
+  function commit(mutate) {
+    var prevC = state.cats.slice(), prevW = state.weighs.slice();
+    mutate();
+    if (!saveLocal()) { state.cats = prevC; state.weighs = prevW; render(); return Promise.reject(new Error('save failed')); }
+    render(); return Promise.resolve();
+  }
   function listFor(coll) { return coll === 'cats' ? state.cats : state.weighs; }
   function put(coll, id, data) {
-    var arr = listFor(coll), obj = Object.assign({ id: id }, data), i = arr.findIndex(function (x) { return x.id === id; });
-    if (i >= 0) arr[i] = obj; else arr.push(obj);
-    saveLocal(); render(); return Promise.resolve();
+    return commit(function () {
+      var arr = listFor(coll), obj = Object.assign({ id: id }, data), i = arr.findIndex(function (x) { return x.id === id; });
+      if (i >= 0) arr[i] = obj; else arr.push(obj);
+    });
   }
   function del(coll, id) {
-    var arr = listFor(coll), i = arr.findIndex(function (x) { return x.id === id; });
-    if (i >= 0) arr.splice(i, 1);
-    saveLocal(); render(); return Promise.resolve();
+    return commit(function () {
+      var arr = listFor(coll), i = arr.findIndex(function (x) { return x.id === id; });
+      if (i >= 0) arr.splice(i, 1);
+    });
   }
   function writeError() { return 'Couldn’t save on this phone. Check that the browser isn’t in private mode.'; }
   function strip(o) { var r = Object.assign({}, o); delete r.id; return r; }
@@ -370,21 +393,34 @@ details.settings[open] summary { margin-bottom: 10px; }
   $('#installHide').addEventListener('click', function () { ls.set('ww.installHidden', true); $('#installTip').hidden = true; });
 
   // ---------- backup ----------
-  $('#exportBtn').addEventListener('click', function () {
-    var data = { app: 'whisker-weigh-in', version: 1, saved: new Date().toISOString(), cats: state.cats, weighs: state.weighs };
-    var json = JSON.stringify(data, null, 2);
-    var name = 'cat-weights-' + todayStr() + '.json';
+  // Resolves true once the file has been handed to the phone (share sheet or download).
+  function saveBackupFile(name, json) {
     var file = null;
     try { file = new File([json], name, { type: 'application/json' }); } catch (e) {}
     if (file && navigator.canShare && navigator.canShare({ files: [file] })) {
-      navigator.share({ files: [file], title: 'Cat weights backup' }).catch(function () {});
-      return;
+      return navigator.share({ files: [file], title: 'Cat weights backup' }).then(function () { return true; }, function (e) {
+        if (e && e.name === 'AbortError') return false;
+        return downloadFile(name, json);
+      });
     }
+    return Promise.resolve(downloadFile(name, json));
+  }
+  function downloadFile(name, json) {
     var a = document.createElement('a');
     a.href = URL.createObjectURL(new Blob([json], { type: 'application/json' }));
     a.download = name; document.body.appendChild(a); a.click(); a.remove();
     setTimeout(function () { URL.revokeObjectURL(a.href); }, 2000);
-    toast('Backup saved as ' + name + '.');
+    return true;
+  }
+  $('#exportBtn').addEventListener('click', function () {
+    var data = { app: 'whisker-weigh-in', version: 1, saved: new Date().toISOString(), cats: state.cats, weighs: state.weighs };
+    var json = JSON.stringify(data, null, 2);
+    var name = 'cat-weights-' + todayStr() + '.json';
+    saveBackupFile(name, json).then(function (ok) {
+      if (!ok) return;
+      ls.set('ww.lastBackup', todayStr()); render();
+      toast('Backup saved as ' + name + '.');
+    });
   });
   var pendingImport = null;
   $('#importBtn').addEventListener('click', function () { $('#importFile').click(); });
@@ -404,11 +440,14 @@ details.settings[open] summary { margin-bottom: 10px; }
   $('#importConfirm').addEventListener('click', function (e) {
     if (e.target.closest('#impNo')) { pendingImport = null; this.innerHTML = ''; return; }
     if (e.target.closest('#impYes') && pendingImport) {
-      state.cats = pendingImport.cats.filter(function (c) { return c && c.id && c.name; });
-      state.weighs = pendingImport.weighs.filter(function (w) { return w && w.id && w.cat && typeof w.kg === 'number' && /^\d{4}-\d\d-\d\d$/.test(w.date); });
-      pendingImport = null; this.innerHTML = '';
-      saveLocal(); state.sel = null; fixSel(); render();
-      toast('Backup restored.');
+      var d = pendingImport; pendingImport = null; this.innerHTML = '';
+      commit(function () {
+        state.cats = d.cats.filter(function (c) { return c && c.id && c.name; });
+        state.weighs = d.weighs.filter(function (w) { return w && w.id && w.cat && typeof w.kg === 'number' && /^\d{4}-\d\d-\d\d$/.test(w.date); });
+      }).then(function () {
+        endEdit(); state.sel = null; fixSel(); render();
+        toast('Backup restored.');
+      }, function () { toast(writeError()); });
     }
   });
 
@@ -424,17 +463,23 @@ details.settings[open] summary { margin-bottom: 10px; }
   // ---------- render ----------
   var ICON_WARN = '<svg viewBox="0 0 20 20" aria-hidden="true"><path d="M10 2 L19 18 H1 Z" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/><path d="M10 8 V12" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><circle cx="10" cy="15" r="1.2" fill="currentColor"/></svg>';
   var ICON_OK = '<svg viewBox="0 0 20 20" aria-hidden="true"><circle cx="10" cy="10" r="8" fill="none" stroke="currentColor" stroke-width="2"/><path d="M6 10.5 L9 13 L14 7.5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>';
-  var ICON_DEL = '<svg viewBox="0 0 20 20" aria-hidden="true"><path d="M4 6 H16 M8 6 V4 H12 V6 M6 6 L7 17 H13 L14 6" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+  var ICON_EDIT = '<svg viewBox="0 0 20 20" aria-hidden="true"><path d="M13.5 3.5 L16.5 6.5 L7 16 H4 V13 Z M11.5 5.5 L14.5 8.5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+  var ICON_DEL ='<svg viewBox="0 0 20 20" aria-hidden="true"><path d="M4 6 H16 M8 6 V4 H12 V6 M6 6 L7 17 H13 L14 6" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>';
 
+  // Compare the latest weight with weigh-ins from 3 to 17 weeks earlier.
+  // Loss is measured from the highest of those and gain from the lowest, so slow change still shows.
   function trend(ws) {
     if (ws.length < 2) return null;
-    var last = ws[ws.length - 1], L = dnum(last.date), ref = null;
-    for (var i = ws.length - 2; i >= 0; i--) {
-      var gap = L - dnum(ws[i].date);
-      if (gap >= 21) { if (gap <= 120) ref = ws[i]; break; }
-    }
-    if (!ref) return null;
-    return { pct: (last.kg - ref.kg) / ref.kg * 100, ref: ref };
+    var last = ws[ws.length - 1], L = dnum(last.date);
+    var win = ws.filter(function (w) { var gap = L - dnum(w.date); return gap >= 21 && gap <= 120; });
+    if (!win.length) return null;
+    var pct = function (ref) { return (last.kg - ref.kg) / ref.kg * 100; };
+    var peak = win.reduce(function (a, b) { return b.kg > a.kg ? b : a; });
+    var low = win.reduce(function (a, b) { return b.kg < a.kg ? b : a; });
+    if (pct(peak) <= -5) return { pct: pct(peak), ref: peak };
+    if (pct(low) >= 10) return { pct: pct(low), ref: low };
+    var ref = win[win.length - 1];
+    return { pct: pct(ref), ref: ref };
   }
 
   function render() {
@@ -444,6 +489,11 @@ details.settings[open] summary { margin-bottom: 10px; }
     document.querySelectorAll('.unitLab').forEach(function (u) { u.textContent = state.unit; });
     $('#wIn').placeholder = state.unit === 'kg' ? '0.00' : '0.0';
 
+    // backup status
+    var lb = ls.get('ww.lastBackup', null);
+    var due = state.weighs.length >= 3 && (!lb || dnum(todayStr()) - dnum(lb) > 30);
+    $('#backupStatus').textContent = (lb ? 'Last backup: ' + fmtDate(lb, true) + ' (' + daysAgo(lb) + ').' : 'No backup saved yet.') + (due ? ' Time to save a new one.' : '');
+    $('#backupCard').classList.toggle('due', due);
 
     var ready = state.loadedCats && state.loadedWeighs;
     $('#loading').hidden = ready;
@@ -471,14 +521,15 @@ details.settings[open] summary { margin-bottom: 10px; }
       var t = trend(ws);
       if (t) {
         var p = Math.abs(t.pct).toFixed(1) + '%';
-        if (t.pct <= -5) h += '<div class="pill warn">' + ICON_WARN + '<span>Down ' + p + ' since ' + fmtDate(t.ref.date) + '. Steady weight loss in a cat is worth mentioning to your vet.</span></div>';
-        else if (t.pct >= 10) h += '<div class="pill warn">' + ICON_WARN + '<span>Up ' + p + ' since ' + fmtDate(t.ref.date) + '. Worth asking your vet about portion sizes.</span></div>';
-        else h += '<div class="pill good">' + ICON_OK + '<span>Steady: ' + (t.pct < 0 ? 'down ' : 'up ') + p + ' since ' + fmtDate(t.ref.date) + '.</span></div>';
+        var since = ' since ' + fmtDate(t.ref.date) + ' (was ' + fmtW(t.ref.kg) + ' ' + state.unit + ')';
+        if (t.pct <= -5) h += '<div class="pill warn">' + ICON_WARN + '<span>Down ' + p + since + '. Steady weight loss in a cat is worth mentioning to your vet.</span></div>';
+        else if (t.pct >= 10) h += '<div class="pill warn">' + ICON_WARN + '<span>Up ' + p + since + '. Worth asking your vet about portion sizes.</span></div>';
+        else h += '<div class="pill good">' + ICON_OK + '<span>Steady: ' + (t.pct < 0 ? 'down ' : 'up ') + p + since + '.</span></div>';
       }
     }
     $('#hero').innerHTML = h;
     $('#chartTitle').textContent = cat.name + '’s weight (' + state.unit + ')';
-    $('#logTitle').textContent = 'Log a weigh-in for ' + cat.name;
+    $('#logTitle').textContent = (state.editId ? 'Edit weigh-in for ' : 'Log a weigh-in for ') + cat.name;
     $('#settingsSum').textContent = 'Rename or remove ' + cat.name;
     if (document.activeElement !== $('#renameIn')) $('#renameIn').value = cat.name;
 
@@ -486,15 +537,20 @@ details.settings[open] summary { margin-bottom: 10px; }
 
     // history
     var rows = ws.slice().reverse();
-    $('#history').innerHTML = rows.length ? rows.map(function (w, i) {
+    var shown = state.showAll ? rows : rows.slice(0, HISTORY_SHOWN);
+    $('#history').innerHTML = rows.length ? shown.map(function (w, i) {
       var older = rows[i + 1];
       var conf = state.confirmDel === w.id
         ? '<div class="confirm"><span>Delete this weigh-in?</span><button type="button" class="btn danger" data-delyes="' + esc(w.id) + '">Delete</button><button type="button" class="btn ghost" data-delno="1">Keep</button></div>'
         : '';
       return '<li><div><div class="when">' + fmtDate(w.date, true) + '</div>' + (w.note ? '<div class="note">' + esc(w.note) + '</div>' : '') + '</div>' +
         '<div class="w">' + fmtW(w.kg) + ' ' + state.unit + (older ? '<span class="d">' + fmtDelta(w.kg - older.kg) + '</span>' : '') + '</div>' +
-        '<button type="button" class="icon-btn" data-del="' + esc(w.id) + '" aria-label="Delete weigh-in from ' + fmtDate(w.date, true) + '">' + ICON_DEL + '</button>' + conf + '</li>';
+        '<div class="acts"><button type="button" class="icon-btn" data-edit="' + esc(w.id) + '" aria-label="Edit weigh-in from ' + fmtDate(w.date, true) + '">' + ICON_EDIT + '</button>' +
+        '<button type="button" class="icon-btn" data-del="' + esc(w.id) + '" aria-label="Delete weigh-in from ' + fmtDate(w.date, true) + '">' + ICON_DEL + '</button></div>' + conf + '</li>';
     }).join('') : '<li><span class="more">Weigh-ins you log show up here.</span></li>';
+    var moreBtn = $('#historyMore');
+    moreBtn.hidden = rows.length <= HISTORY_SHOWN;
+    moreBtn.textContent = state.showAll ? 'Show fewer' : 'Show all ' + rows.length + ' weigh-ins';
 
     // remove cat
     $('#removeArea').innerHTML = state.confirmCat
@@ -583,7 +639,7 @@ details.settings[open] summary { margin-bottom: 10px; }
   });
   $('#chips').addEventListener('click', function (e) {
     var b = e.target.closest('[data-cat]');
-    if (b) { state.sel = b.dataset.cat; ls.set('ww.sel', state.sel); state.confirmDel = null; state.confirmCat = false; $('#settings').open = false; render(); return; }
+    if (b) { state.sel = b.dataset.cat; ls.set('ww.sel', state.sel); state.confirmDel = null; state.confirmCat = false; state.showAll = false; endEdit(); $('#settings').open = false; render(); return; }
     if (e.target.closest('#addChip')) { var f = $('#addCatForm'); f.hidden = !f.hidden; if (!f.hidden) $('#newCatName').focus(); }
   });
   $('#firstCatForm').addEventListener('submit', function (e) {
@@ -596,26 +652,55 @@ details.settings[open] summary { margin-bottom: 10px; }
     e.preventDefault(); var cat = selCat(), n = $('#renameIn').value.trim(); if (!cat || !n || n === cat.name) return;
     put('cats', cat.id, Object.assign(strip(cat), { name: n })).then(function () { $('#renameIn').blur(); toast('Renamed to ' + n + '.'); }, function (er) { toast(writeError(er)); });
   });
-  $('#removeArea').addEventListener('click', async function (e) {
+  $('#removeArea').addEventListener('click', function (e) {
     if (e.target.closest('#catDel')) { state.confirmCat = true; render(); return; }
     if (e.target.closest('#catNo')) { state.confirmCat = false; render(); return; }
     if (e.target.closest('#catYes')) {
       var cat = selCat(); if (!cat) return;
-      try {
-        var ws = catWeighs(cat.id);
-        for (var i = 0; i < ws.length; i++) await del('weighs', ws[i].id);
-        await del('cats', cat.id);
-        state.confirmCat = false; state.sel = null; $('#settings').open = false; fixSel(); render();
+      state.confirmCat = false;
+      commit(function () {
+        state.weighs = state.weighs.filter(function (w) { return w.cat !== cat.id; });
+        state.cats = state.cats.filter(function (c) { return c.id !== cat.id; });
+      }).then(function () {
+        endEdit(); state.sel = null; $('#settings').open = false; fixSel(); render();
         toast(cat.name + ' removed.');
-      } catch (er) { toast(writeError(er)); }
+      }, function () { toast(writeError()); });
     }
   });
   $('#history').addEventListener('click', function (e) {
+    var ed = e.target.closest('[data-edit]'); if (ed) { startEdit(ed.dataset.edit); return; }
     var d = e.target.closest('[data-del]'); if (d) { state.confirmDel = d.dataset.del; render(); return; }
     if (e.target.closest('[data-delno]')) { state.confirmDel = null; render(); return; }
     var y = e.target.closest('[data-delyes]');
-    if (y) { var id = y.dataset.delyes; state.confirmDel = null; del('weighs', id).then(function () { toast('Weigh-in deleted.'); }, function (er) { toast(writeError(er)); }); }
+    if (y) {
+      var id = y.dataset.delyes; state.confirmDel = null;
+      if (state.editId === id) endEdit();
+      del('weighs', id).then(function () { toast('Weigh-in deleted.'); }, function () { toast(writeError()); });
+    }
   });
+  $('#historyMore').addEventListener('click', function () { state.showAll = !state.showAll; render(); });
+
+  // editing an existing weigh-in reuses the log form
+  function findWeigh(id) { for (var i = 0; i < state.weighs.length; i++) if (state.weighs[i].id === id) return state.weighs[i]; return null; }
+  function clearForm() {
+    $('#wIn').value = ''; $('#withCat').value = ''; $('#youAlone').value = ''; $('#nIn').value = ''; $('#dIn').value = todayStr(); updateScale();
+  }
+  function startEdit(id) {
+    var w = findWeigh(id); if (!w) return;
+    state.editId = id; state.confirmDel = null;
+    $('#useScale').checked = false; $('#scaleRows').hidden = true; $('#directRow').hidden = false;
+    $('#wIn').value = fmtW(w.kg); $('#dIn').value = w.date; $('#nIn').value = w.note || '';
+    $('#saveBtn').textContent = 'Save changes'; $('#cancelEdit').hidden = false; $('#formMsg').textContent = '';
+    render();
+    $('#logForm').scrollIntoView({ block: 'center' });
+    $('#wIn').focus({ preventScroll: true });
+  }
+  function endEdit() {
+    if (!state.editId) return;
+    state.editId = null; clearForm();
+    $('#saveBtn').textContent = 'Save weigh-in'; $('#cancelEdit').hidden = true;
+  }
+  $('#cancelEdit').addEventListener('click', function () { endEdit(); $('#formMsg').textContent = ''; render(); });
 
   // log form
   function updateScale() {
@@ -637,20 +722,43 @@ details.settings[open] summary { margin-bottom: 10px; }
     if (!cat) return;
     var v = $('#useScale').checked ? updateScale() : parseNum($('#wIn').value);
     if (isNaN(v)) { msg.className = 'msg err'; msg.textContent = 'Enter the weight as a number, like ' + (state.unit === 'kg' ? '4.25' : '9.4') + '.'; return; }
+    var editing = state.editId ? findWeigh(state.editId) : null;
     var kg = fromUnit(v);
+    // An unchanged weight keeps its exact stored value instead of the rounded display value.
+    if (editing && !$('#useScale').checked && $('#wIn').value.trim() === fmtW(editing.kg)) kg = editing.kg;
     if (kg < 0.1 || kg > 20) { msg.className = 'msg err'; msg.textContent = 'That looks off for a cat. Check the number and the kg/lb switch.'; return; }
     var date = $('#dIn').value || todayStr();
     if (date > todayStr()) { msg.className = 'msg err'; msg.textContent = 'The date can’t be in the future.'; return; }
     var btn = $('#saveBtn'); btn.disabled = true;
-    put('weighs', newId(), { cat: cat.id, kg: Math.round(kg * 1000) / 1000, date: date, note: $('#nIn').value.trim(), created: Date.now() })
+    var id = editing ? editing.id : newId();
+    put('weighs', id, { cat: editing ? editing.cat : cat.id, kg: Math.round(kg * 1000) / 1000, date: date, note: $('#nIn').value.trim(), created: editing ? editing.created : Date.now() })
       .then(function () {
-        $('#wIn').value = ''; $('#withCat').value = ''; $('#youAlone').value = ''; $('#nIn').value = ''; $('#dIn').value = todayStr(); updateScale();
-        msg.className = 'msg ok'; msg.textContent = 'Saved ' + v.toFixed(dec()) + ' ' + state.unit + ' for ' + cat.name + '.';
-      }, function (er) { msg.className = 'msg err'; msg.textContent = writeError(er); })
+        var wasEditing = !!editing;
+        if (wasEditing) endEdit(); else clearForm();
+        render();
+        msg.className = 'msg ok'; msg.textContent = (wasEditing ? 'Updated to ' : 'Saved ') + v.toFixed(dec()) + ' ' + state.unit + ' for ' + cat.name + '.';
+      }, function () { msg.className = 'msg err'; msg.textContent = writeError(); })
       .then(function () { btn.disabled = false; });
   });
 
-  var rT; window.addEventListener('resize', function () { clearTimeout(rT); rT = setTimeout(render, 150); });
+  // Redraw only when the width changes; phone browsers fire resize while scrolling as the address bar hides.
+  var rT, lastW = window.innerWidth;
+  window.addEventListener('resize', function () {
+    if (window.innerWidth === lastW) return;
+    lastW = window.innerWidth; clearTimeout(rT); rT = setTimeout(render, 150);
+  });
+  // An installed app can stay open for days: move "today" forward when it comes back.
+  var lastDay = todayStr();
+  document.addEventListener('visibilitychange', function () {
+    if (document.hidden) return;
+    var t = todayStr();
+    if (t !== lastDay) {
+      var d = $('#dIn');
+      if (d.value === lastDay) d.value = t;
+      d.max = t; lastDay = t;
+    }
+    render();
+  });
   boot();
   if ('serviceWorker' in navigator) {
     window.addEventListener('load', function () { navigator.serviceWorker.register('sw.js').catch(function () {}); });
